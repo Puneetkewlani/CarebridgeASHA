@@ -49,9 +49,11 @@ CareBridge addresses this issue by offering an **offline-first solution** that e
    git clone https://github.com/your-username/CareBridge.git
    cd CareBridge
 2. Install dependencies:
+   ```bash
    flutter pub get
 
 
-3. Run the app:
+4. Run the app:
+   ```bash
    flutter run
 
