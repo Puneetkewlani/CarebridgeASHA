@@ -60,7 +60,7 @@ CareBridge addresses this issue by offering an **offline-first solution** that e
 
    ## 🤝 Team
 
-**SaharaScript** is developed by a dedicated team of professionals:
+**CarebridgeASHA** is developed by a dedicated team of professionals:
 
 - **Harsidak Singh Banwait** -  AI/ML Specialist  
 - **Sajanpreet Singh** - Team Lead & Full-Stack Developer
