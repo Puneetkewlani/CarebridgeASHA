@@ -57,3 +57,12 @@ CareBridge addresses this issue by offering an **offline-first solution** that e
    ```bash
    flutter run
 
+   | Name     | Role                      |
+| -------- | ------------------------- |
+| Vatsal | App Development           |
+| Harsidak  | Backend Integration       |
+| Sajanpreet singh | Web Design                |
+| Vaibhavi | Documentation / UI Design |
+| Puneet| Lead research, assitant app developer|
+| Suryansh moudgail| Assitant backend developer|
+
