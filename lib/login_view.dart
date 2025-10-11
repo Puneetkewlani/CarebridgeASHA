@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // For querying ASHA ID
 import 'package:flutter/material.dart';
 import 'register_view.dart'; // For navigation to register
 import 'homepage.dart'; // Import for direct navigation if needed
@@ -11,14 +12,16 @@ class LoginView extends StatefulWidget {
 }
 
 class _LoginViewState extends State<LoginView> {
-  final _emailController = TextEditingController();
+  final _ashaIdController = TextEditingController(); // Changed to ASHA ID
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _obscurePassword = true; // Toggle for password visibility
 
   @override
   void dispose() {
-    _emailController.dispose();
+    _ashaIdController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -26,8 +29,37 @@ class _LoginViewState extends State<LoginView> {
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       try {
+        // Query Firestore for ASHA ID to get associated email
+        final querySnapshot = await _firestore
+            .collection('users')
+            .where('ashaId', isEqualTo: _ashaIdController.text.trim())
+            .limit(1)
+            .get();
+        
+        if (querySnapshot.docs.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('ASHA ID not found. Please register or check your ID.')),
+            );
+          }
+          return;
+        }
+
+        final userDoc = querySnapshot.docs.first;
+        final email = userDoc.data()['email'] as String?;
+
+        if (email == null || email.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('No email associated with this ASHA ID.')),
+            );
+          }
+          return;
+        }
+
+        // Sign in using the retrieved email and provided password
         await _auth.signInWithEmailAndPassword(
-          email: _emailController.text.trim(),
+          email: email,
           password: _passwordController.text,
         );
         // Successful login: Redirect to homepage
@@ -40,8 +72,100 @@ class _LoginViewState extends State<LoginView> {
             SnackBar(content: Text(e.message ?? 'Login failed')),
           );
         }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: ${e.toString()}')),
+          );
+        }
       }
     }
+  }
+
+  Future<void> _forgotPassword() async {
+    final TextEditingController forgotController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Forgot Password?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Enter your ASHA ID to receive a reset code via email.'),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: forgotController,
+              decoration: const InputDecoration(
+                labelText: 'ASHA ID',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Enter your ASHA ID';
+                }
+                if (!RegExp(r'^[A-Z]{4}-\d{4}$').hasMatch(value)) {
+                  return 'Invalid ASHA ID format (e.g., ASHA-4567)';
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (forgotController.text.isNotEmpty) {
+                try {
+                  // Query Firestore for ASHA ID to get email
+                  final querySnapshot = await _firestore
+                      .collection('users')
+                      .where('ashaId', isEqualTo: forgotController.text.trim())
+                      .limit(1)
+                      .get();
+                  
+                  if (querySnapshot.docs.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('ASHA ID not found.')),
+                    );
+                    return;
+                  }
+
+                  final userDoc = querySnapshot.docs.first;
+                  final email = userDoc.data()['email'] as String?;
+
+                  if (email == null || email.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('No email associated with this ASHA ID.')),
+                    );
+                    return;
+                  }
+
+                  // Send password reset email
+                  await _auth.sendPasswordResetEmail(email: email);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Reset code sent to your email. Check your inbox.')),
+                    );
+                    Navigator.pop(context);
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: ${e.toString()}')),
+                    );
+                  }
+                }
+              }
+            },
+            child: const Text('Send Reset Code'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -85,9 +209,9 @@ class _LoginViewState extends State<LoginView> {
                   ),
                   const SizedBox(height: 32),
                   TextFormField(
-                    controller: _emailController,
+                    controller: _ashaIdController,
                     decoration: InputDecoration(
-                      labelText: 'Username / Email',
+                      labelText: 'ASHA ID',
                       labelStyle: TextStyle(color: Colors.grey[600]),
                       filled: true,
                       fillColor: Colors.white,
@@ -96,13 +220,12 @@ class _LoginViewState extends State<LoginView> {
                         borderSide: BorderSide.none,
                       ),
                     ),
-                    keyboardType: TextInputType.emailAddress,
                     validator: (value) {
                       if (value == null || value.isEmpty) {
-                        return 'Enter your email';
+                        return 'Enter your ASHA ID';
                       }
-                      if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
-                        return 'Enter a valid email';
+                      if (value.length < 8 || !RegExp(r'^[A-Z]{4}-\d{4}$').hasMatch(value)) {
+                        return 'Invalid ASHA ID (e.g., ASHA-4567)';
                       }
                       return null;
                     },
@@ -119,14 +242,35 @@ class _LoginViewState extends State<LoginView> {
                         borderRadius: BorderRadius.circular(8),
                         borderSide: BorderSide.none,
                       ),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
                     ),
-                    obscureText: true,
+                    obscureText: _obscurePassword,
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return 'Enter your password';
                       }
                       return null;
                     },
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _forgotPassword,
+                      child: const Text(
+                        'Forgot Password?',
+                        style: TextStyle(color: Colors.blue, fontSize: 14),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   SizedBox(
