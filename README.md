@@ -80,11 +80,12 @@ CareBridge addresses this issue by offering an **offline-first solution** that e
 
 **CarebridgeASHA** is developed by a dedicated team of professionals:
 
-- **Harsidak Singh Banwait** -  AI/ML Specialist  
+- **Harsidak Singh Banwait** -  AI/ML Specialist
+- **Vatsal** - Frontend Developer,App developer
 - **Sajanpreet Singh** - Team Lead & Full-Stack Developer
 - **Suryansh Modgil** - Backend Developer
 - **Puneet** - Data Analyst,Assitant App developer 
 - **Vaibhavi** - UX/UI Designer
-- **Vatsal** - Frontend Developer,App developer 
+ 
 
 >>>>>>> b0ed7629e02312f4f26c0a21f922c252749147c7
