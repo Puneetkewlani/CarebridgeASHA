@@ -1,8 +1,9 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // For querying ASHA ID
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'register_view.dart'; // For navigation to register
-import 'homepage.dart'; // Import for direct navigation if needed
+import 'package:flutter/services.dart';
+import 'register_view.dart';
+import 'homepage.dart';
 
 class LoginView extends StatefulWidget {
   const LoginView({super.key});
@@ -12,77 +13,80 @@ class LoginView extends StatefulWidget {
 }
 
 class _LoginViewState extends State<LoginView> {
-  final _ashaIdController = TextEditingController(); // Changed to ASHA ID
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  bool _obscurePassword = true; // Toggle for password visibility
+  bool _obscurePassword = true;
+  bool _isLoading = false;
 
   @override
   void dispose() {
-    _ashaIdController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
+    print('=== _login() STARTED ===');
     if (_formKey.currentState!.validate()) {
+      print('Validation passed - Proceeding to login');
+      setState(() => _isLoading = true);
+      final emailInput = _emailController.text.trim().toLowerCase();
+      print('Login attempt: Email = $emailInput');
+      
       try {
-        // Query Firestore for ASHA ID to get associated email
-        final querySnapshot = await _firestore
-            .collection('users')
-            .where('ashaId', isEqualTo: _ashaIdController.text.trim())
-            .limit(1)
-            .get();
-        
-        if (querySnapshot.docs.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('ASHA ID not found. Please register or check your ID.')),
-            );
-          }
-          return;
-        }
-
-        final userDoc = querySnapshot.docs.first;
-        final email = userDoc.data()['email'] as String?;
-
-        if (email == null || email.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('No email associated with this ASHA ID.')),
-            );
-          }
-          return;
-        }
-
-        // Sign in using the retrieved email and provided password
+        print('Attempting signInWithEmailAndPassword...');
         await _auth.signInWithEmailAndPassword(
-          email: email,
+          email: emailInput,
           password: _passwordController.text,
         );
-        // Successful login: Redirect to homepage
+        print('Sign-in successful - Navigating to /home');
+        
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/home');
         }
       } on FirebaseAuthException catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.message ?? 'Login failed')),
-          );
+        print('FirebaseAuthException: Code=${e.code}, Message=${e.message}');
+        String errorMsg = 'Login failed: ${e.message}';
+        
+        if (e.code == 'user-not-found') {
+          errorMsg = 'No account found with this email. Please register first.';
+        } else if (e.code == 'wrong-password') {
+          errorMsg = 'Incorrect password. Please try again.';
+        } else if (e.code == 'invalid-email') {
+          errorMsg = 'Invalid email format. Please check your email.';
+        } else if (e.code == 'user-disabled') {
+          errorMsg = 'This account has been disabled. Contact support.';
+        } else if (e.code == 'network-request-failed') {
+          errorMsg = 'Network error. Please check your internet connection.';
         }
+        
+        _showSnackBar(errorMsg, Colors.red);
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: ${e.toString()}')),
-          );
-        }
+        print('General catch: $e');
+        _showSnackBar('Unexpected error. Please restart and try again.', Colors.red);
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+        print('=== _login() ENDED ===');
       }
+    } else {
+      print('Validation FAILED - _login() exited early');
+    }
+  }
+
+  void _showSnackBar(String message, Color backgroundColor) {
+    print('Showing snackbar: $message');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: backgroundColor),
+      );
     }
   }
 
   Future<void> _forgotPassword() async {
+    print('Forgot password dialog opened');
     final TextEditingController forgotController = TextEditingController();
     showDialog(
       context: context,
@@ -91,20 +95,22 @@ class _LoginViewState extends State<LoginView> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Enter your ASHA ID to receive a reset code via email.'),
+            const Text('Enter your email to receive a password reset link.'),
             const SizedBox(height: 16),
             TextFormField(
               controller: forgotController,
               decoration: const InputDecoration(
-                labelText: 'ASHA ID',
+                labelText: 'Email',
                 border: OutlineInputBorder(),
               ),
+              keyboardType: TextInputType.emailAddress,
               validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Enter your ASHA ID';
+                final trimmed = (value ?? '').trim();
+                if (trimmed.isEmpty) {
+                  return 'Enter your email';
                 }
-                if (!RegExp(r'^[A-Z]{4}-\d{4}$').hasMatch(value)) {
-                  return 'Invalid ASHA ID format (e.g., ASHA-4567)';
+                if (!trimmed.contains('@')) {
+                  return 'Enter a valid email';
                 }
                 return null;
               },
@@ -118,54 +124,63 @@ class _LoginViewState extends State<LoginView> {
           ),
           ElevatedButton(
             onPressed: () async {
-              if (forgotController.text.isNotEmpty) {
-                try {
-                  // Query Firestore for ASHA ID to get email
-                  final querySnapshot = await _firestore
-                      .collection('users')
-                      .where('ashaId', isEqualTo: forgotController.text.trim())
-                      .limit(1)
-                      .get();
-                  
-                  if (querySnapshot.docs.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('ASHA ID not found.')),
-                    );
-                    return;
-                  }
-
-                  final userDoc = querySnapshot.docs.first;
-                  final email = userDoc.data()['email'] as String?;
-
-                  if (email == null || email.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('No email associated with this ASHA ID.')),
-                    );
-                    return;
-                  }
-
-                  // Send password reset email
-                  await _auth.sendPasswordResetEmail(email: email);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Reset code sent to your email. Check your inbox.')),
-                    );
-                    Navigator.pop(context);
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error: ${e.toString()}')),
-                    );
-                  }
+              final forgotEmail = forgotController.text.trim().toLowerCase();
+              if (forgotEmail.isEmpty || !forgotEmail.contains('@')) {
+                _showSnackBar('Please enter a valid email.', Colors.orange);
+                return;
+              }
+              
+              try {
+                await _auth.sendPasswordResetEmail(email: forgotEmail);
+                _showSnackBar('Reset link sent to $forgotEmail. Check your inbox/spam.', Colors.green);
+                Navigator.pop(context);
+              } on FirebaseAuthException catch (e) {
+                String msg = 'Reset failed: ${e.message}';
+                if (e.code == 'user-not-found') {
+                  msg = 'No account found with this email.';
+                } else if (e.code == 'invalid-email') {
+                  msg = 'Invalid email format.';
                 }
+                _showSnackBar(msg, Colors.red);
+              } catch (e) {
+                print('Forgot error: $e');
+                _showSnackBar('Reset unavailable. Please try again later.', Colors.red);
               }
             },
-            child: const Text('Send Reset Code'),
+            child: const Text('Send Reset Link'),
           ),
         ],
       ),
     );
+  }
+
+  String? _emailValidator(String? value) {
+    print('Email Validator called: Raw value="$value"');
+    final trimmed = (value ?? '').trim();
+    print('Email Validator: Trimmed="$trimmed"');
+    
+    if (trimmed.isEmpty) {
+      print('Email Validator: Empty - Error');
+      return 'Enter your email';
+    }
+    
+    if (!trimmed.contains('@') || !trimmed.contains('.')) {
+      print('Email Validator: Invalid format - Error');
+      return 'Enter a valid email';
+    }
+    
+    print('Email Validator: Passed');
+    return null;
+  }
+
+  String? _passwordValidator(String? value) {
+    print('Password Validator: Raw="$value"');
+    if ((value ?? '').trim().isEmpty) {
+      print('Password Validator: Empty - Error');
+      return 'Enter your password';
+    }
+    print('Password Validator: Passed');
+    return null;
   }
 
   @override
@@ -199,19 +214,27 @@ class _LoginViewState extends State<LoginView> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // ✅ ADDED: Icon at top to match register page
+                  const Icon(
+                    Icons.health_and_safety,
+                    size: 80,
+                    color: Colors.green,
+                  ),
+                  const SizedBox(height: 16),
+                  // ✅ CHANGED: Updated text style to match register
                   const Text(
-                    'Login',
+                    'Login to Carebridge ASHA',
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: Colors.purple,
+                      color: Colors.green,
                     ),
                   ),
                   const SizedBox(height: 32),
                   TextFormField(
-                    controller: _ashaIdController,
+                    controller: _emailController,
                     decoration: InputDecoration(
-                      labelText: 'ASHA ID',
+                      labelText: 'Email *',
                       labelStyle: TextStyle(color: Colors.grey[600]),
                       filled: true,
                       fillColor: Colors.white,
@@ -219,22 +242,17 @@ class _LoginViewState extends State<LoginView> {
                         borderRadius: BorderRadius.circular(8),
                         borderSide: BorderSide.none,
                       ),
+                      prefixIcon: const Icon(Icons.email, color: Colors.green), // ✅ CHANGED: Green icon
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Enter your ASHA ID';
-                      }
-                      if (value.length < 8 || !RegExp(r'^[A-Z]{4}-\d{4}$').hasMatch(value)) {
-                        return 'Invalid ASHA ID (e.g., ASHA-4567)';
-                      }
-                      return null;
-                    },
+                    keyboardType: TextInputType.emailAddress,
+                    validator: _emailValidator,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _passwordController,
                     decoration: InputDecoration(
-                      labelText: 'Password',
+                      labelText: 'Password *',
                       labelStyle: TextStyle(color: Colors.grey[600]),
                       filled: true,
                       fillColor: Colors.white,
@@ -242,6 +260,7 @@ class _LoginViewState extends State<LoginView> {
                         borderRadius: BorderRadius.circular(8),
                         borderSide: BorderSide.none,
                       ),
+                      prefixIcon: const Icon(Icons.lock, color: Colors.green), // ✅ CHANGED: Green icon
                       suffixIcon: IconButton(
                         icon: Icon(
                           _obscurePassword ? Icons.visibility : Icons.visibility_off,
@@ -254,12 +273,8 @@ class _LoginViewState extends State<LoginView> {
                       ),
                     ),
                     obscureText: _obscurePassword,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Enter your password';
-                      }
-                      return null;
-                    },
+                    validator: _passwordValidator,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
                   ),
                   const SizedBox(height: 8),
                   Align(
@@ -268,7 +283,7 @@ class _LoginViewState extends State<LoginView> {
                       onPressed: _forgotPassword,
                       child: const Text(
                         'Forgot Password?',
-                        style: TextStyle(color: Colors.blue, fontSize: 14),
+                        style: TextStyle(color: Colors.green, fontSize: 14), // ✅ CHANGED: Green color
                       ),
                     ),
                   ),
@@ -277,30 +292,40 @@ class _LoginViewState extends State<LoginView> {
                     width: double.infinity,
                     height: 50,
                     child: ElevatedButton(
-                      onPressed: _login, // Triggers redirection on success
+                      onPressed: () {
+                        print('=== LOGIN BUTTON PRESSED ===');
+                        _login();
+                      },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
+                        backgroundColor: Colors.green, // ✅ CHANGED: Green button
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      child: const Text(
-                        'Login',
-                        style: TextStyle(fontSize: 18, color: Colors.white),
-                      ),
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Text(
+                              'Login',
+                              style: TextStyle(fontSize: 18, color: Colors.white),
+                            ),
                     ),
                   ),
                   const SizedBox(height: 16),
                   TextButton(
                     onPressed: () {
+                      print('Register button pressed - Navigating');
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (context) => const RegisterView()),
+                        MaterialPageRoute(builder: (context) => const RegisterPage()),
                       );
                     },
                     child: const Text(
                       "Don't have an account? Register",
-                      style: TextStyle(color: Colors.purple),
+                      style: TextStyle(color: Colors.green), // ✅ CHANGED: Green color
                     ),
                   ),
                 ],

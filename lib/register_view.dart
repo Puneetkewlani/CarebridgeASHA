@@ -1,130 +1,122 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'login_view.dart';
 
-class RegisterView extends StatefulWidget {
-  const RegisterView({super.key});
+class RegisterPage extends StatefulWidget {
+  const RegisterPage({super.key});
 
   @override
-  State<RegisterView> createState() => _RegisterViewState();
+  State<RegisterPage> createState() => _RegisterPageState();
 }
 
-class _RegisterViewState extends State<RegisterView> {
+class _RegisterPageState extends State<RegisterPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _auth = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
   final _emailController = TextEditingController();
-  final _fullNameController = TextEditingController();
-  final _ashaIdController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
+  final _ashaIdController = TextEditingController();
+  final _fullNameController = TextEditingController();
+  bool _isLoading = false;
+  String _errorMessage = '';
+  bool _obscurePassword = true;  // ✅ ADDED
+  bool _obscureConfirmPassword = true;  // ✅ ADDED
 
   @override
   void dispose() {
     _emailController.dispose();
-    _fullNameController.dispose();
-    _ashaIdController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _ashaIdController.dispose();
+    _fullNameController.dispose();
     super.dispose();
   }
 
   Future<void> _register() async {
-    print('=== Registration Debug Start ==='); // Trace entry
-    if (_formKey.currentState!.validate()) {
-      print('Form validation passed'); // Inputs OK
-      if (_passwordController.text != _confirmPasswordController.text) {
-        print('Error: Passwords mismatch'); // Mismatch
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Passwords do not match')),
-          );
-        }
-        return;
-      }
-      print('Passwords match'); // Ready for auth
-      bool authSuccess = false;
-      bool writeSuccess = false;
-      try {
-        print('Calling createUserWithEmailAndPassword...'); // Before auth
-        UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
-        print('Auth success! UID: ${userCredential.user?.uid}, Email: ${userCredential.user?.email}'); // Auth OK
-        authSuccess = true;
-        if (userCredential.user != null) {
-          print('Updating displayName to: ${_fullNameController.text.trim()}'); // Before display
-          await userCredential.user!.updateDisplayName(_fullNameController.text.trim());
-          print('DisplayName updated'); // Display OK
-          try {
-            print('Calling Firestore set with ASHA ID: ${_ashaIdController.text.trim()}'); // Before write
-            await _firestore.collection('users').doc(userCredential.user!.uid).set({
-              'fullName': _fullNameController.text.trim(),
-              'email': _emailController.text.trim(),
-              'ashaId': _ashaIdController.text.trim(),
-              'role': 'normal',
-              'createdAt': FieldValue.serverTimestamp(),
-            });
-            print('Firestore write success! ASHA ID stored.'); // Write OK
-            writeSuccess = true;
-          } catch (writeError) {
-            print('Firestore write failed: $writeError'); // Write error details
-            // No return—continue to redirect
-          }
-          print('Signing out...'); // Before signout
-          await _auth.signOut();
-          print('Sign out complete'); // Signout OK
-        }
-      } on FirebaseAuthException catch (authError) {
-        print('Auth exception: Code=${authError.code}, Message=${authError.message}'); // Auth error code
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Auth failed: ${authError.message ?? 'Unknown'} (${authError.code})')),
-          );
-        }
-        // Force redirect on auth error for user feedback
-        _forceRedirect();
-        return;
-      } catch (generalError) {
-        print('General registration error: $generalError'); // Catch-all
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $generalError')),
-          );
-        }
-        _forceRedirect(); // Ensure redirect
+    if (!_formKey.currentState!.validate()) return;
+
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+    final confirmPassword = _confirmPasswordController.text.trim();
+    final ashaId = _ashaIdController.text.trim();  // ✅ REMOVED .toUpperCase()
+    final fullName = _fullNameController.text.trim();
+
+    // Extra checks
+    if (password != confirmPassword) {
+      setState(() => _errorMessage = 'Passwords do not match');
+      return;
+    }
+    if (password.length < 6) {
+      setState(() => _errorMessage = 'Password must be at least 6 characters');
+      return;
+    }
+    // ✅ REMOVED ASHA ID format restriction
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      // Check for duplicate ASHA ID
+      final querySnapshot = await _firestore
+          .collection('users')
+          .where('ashaId', isEqualTo: ashaId)
+          .limit(1)
+          .get();
+      if (querySnapshot.docs.isNotEmpty) {
+        setState(() {
+          _errorMessage = 'ASHA ID already registered. Please login.';
+          _isLoading = false;
+        });
         return;
       }
 
-      // Success path: Show message and redirect
-      if (authSuccess) {
+      // Create Auth user
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final user = userCredential.user;
+      if (user != null) {
+        // Try create Firestore doc
+        try {
+          await _firestore.collection('users').doc(user.uid).set({
+            'fullName': fullName,
+            'ashaId': ashaId,
+            'email': email,
+            'role': 'user',
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+          print('Firestore doc created successfully');
+        } catch (fsError) {
+          print('Firestore create skipped (offline/billing?): $fsError');
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('fullName', fullName);
+          await prefs.setString('ashaId', ashaId);
+        }
+
+        // Success: redirect to login
         if (mounted) {
-          String msg = writeSuccess 
-            ? 'Registration successful! Please log in.' 
-            : 'Auth OK, but profile (ASHA ID) failed. Please log in and retry.';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg), duration: const Duration(seconds: 4)),
+            const SnackBar(
+              content: Text('Registered successfully! Please log in.'),
+              backgroundColor: Colors.green,
+            ),
           );
-          print('Showing success message and redirecting'); // Before nav
           Navigator.pushReplacementNamed(context, '/login');
         }
-      } else {
-        print('Auth failed—no redirect'); // Fallback
       }
-    } else {
-      print('Form validation failed—check inputs'); // Invalid form
-    }
-    print('=== Registration Debug End ==='); // Trace exit
-  }
-
-  void _forceRedirect() { // Helper for errors
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
+    } on FirebaseAuthException catch (e) {
+      setState(() => _errorMessage = e.message ?? 'Registration failed');
+    } catch (e) {
+      setState(() => _errorMessage = 'An error occurred: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -159,20 +151,80 @@ class _RegisterViewState extends State<RegisterView> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  const Icon(
+                    Icons.health_and_safety,
+                    size: 80,
+                    color: Colors.green,
+                  ),
+                  const SizedBox(height: 16),
                   const Text(
-                    'Register',
+                    'Register for Carebridge ASHA',
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: Colors.purple,
+                      color: Colors.green,
                     ),
                   ),
                   const SizedBox(height: 32),
+                  
+                  // Full Name Field
+                  TextFormField(
+                    controller: _fullNameController,
+                    decoration: InputDecoration(
+                      labelText: 'Full Name *',
+                      labelStyle: TextStyle(color: Colors.grey[600]),
+                      prefixIcon: const Icon(Icons.person, color: Colors.green),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'^[a-zA-Z\s]+$'))
+                    ],
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your full name';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // ASHA ID Field (NO RESTRICTIONS)
+                  TextFormField(
+                    controller: _ashaIdController,
+                    decoration: InputDecoration(
+                      labelText: 'ASHA ID *',  // ✅ SIMPLIFIED
+                      labelStyle: TextStyle(color: Colors.grey[600]),
+                      prefixIcon: const Icon(Icons.badge, color: Colors.green),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                      helperText: 'Enter your unique ASHA identifier',  // ✅ UPDATED
+                    ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your ASHA ID';
+                      }
+                      // ✅ REMOVED format validation
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Email Field
                   TextFormField(
                     controller: _emailController,
                     decoration: InputDecoration(
-                      labelText: 'Email',
+                      labelText: 'Email *',
                       labelStyle: TextStyle(color: Colors.grey[600]),
+                      prefixIcon: const Icon(Icons.email, color: Colors.green),
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
@@ -182,117 +234,143 @@ class _RegisterViewState extends State<RegisterView> {
                     ),
                     keyboardType: TextInputType.emailAddress,
                     validator: (value) {
-                      if (value == null || value.isEmpty) return 'Enter your email';
-                      if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value ?? '')) {
-                        return 'Enter a valid email';
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your email';
+                      }
+                      if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                        return 'Please enter a valid email';
                       }
                       return null;
                     },
                   ),
                   const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _fullNameController,
-                    decoration: InputDecoration(
-                      labelText: 'Full Name',
-                      labelStyle: TextStyle(color: Colors.grey[600]),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) return 'Enter your full name';
-                      if ((value ?? '').length < 2) return 'Full name must be at least 2 characters';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _ashaIdController,
-                    decoration: InputDecoration(
-                      labelText: 'ASHA ID (Government Registered)',
-                      labelStyle: TextStyle(color: Colors.grey[600]),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) return 'Enter your ASHA ID';
-                      if ((value ?? '').length < 8 || !RegExp(r'^[A-Z]{4}-\d{4}$').hasMatch(value ?? '')) {
-                        return 'ASHA ID must be e.g., ASHA-4567';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
+                  
+                  // Password Field with Show/Hide Button
                   TextFormField(
                     controller: _passwordController,
+                    obscureText: _obscurePassword,  // ✅ CHANGED
                     decoration: InputDecoration(
-                      labelText: 'Password',
+                      labelText: 'Password *',
                       labelStyle: TextStyle(color: Colors.grey[600]),
+                      prefixIcon: const Icon(Icons.lock, color: Colors.green),
+                      suffixIcon: IconButton(  // ✅ ADDED
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                         borderSide: BorderSide.none,
                       ),
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
-                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                      ),
                     ),
-                    obscureText: _obscurePassword,
                     validator: (value) {
-                      if (value == null || value.isEmpty) return 'Enter your password';
-                      if ((value ?? '').length < 6) return 'Password must be at least 6 characters';
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter a password';
+                      }
+                      if (value.length < 6) {
+                        return 'Password must be at least 6 characters';
+                      }
                       return null;
                     },
                   ),
                   const SizedBox(height: 16),
+                  
+                  // Confirm Password Field with Show/Hide Button
                   TextFormField(
                     controller: _confirmPasswordController,
+                    obscureText: _obscureConfirmPassword,  // ✅ CHANGED
                     decoration: InputDecoration(
-                      labelText: 'Confirm Password',
+                      labelText: 'Confirm Password *',
                       labelStyle: TextStyle(color: Colors.grey[600]),
+                      prefixIcon: const Icon(Icons.lock_outline, color: Colors.green),
+                      suffixIcon: IconButton(  // ✅ ADDED
+                        icon: Icon(
+                          _obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscureConfirmPassword = !_obscureConfirmPassword;
+                          });
+                        },
+                      ),
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                         borderSide: BorderSide.none,
                       ),
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscureConfirmPassword ? Icons.visibility : Icons.visibility_off),
-                        onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
-                      ),
                     ),
-                    obscureText: _obscureConfirmPassword,
                     validator: (value) {
-                      if (value == null || value.isEmpty) return 'Confirm your password';
+                      if (value == null || value.isEmpty) {
+                        return 'Please confirm your password';
+                      }
+                      if (value != _passwordController.text) {
+                        return 'Passwords do not match';
+                      }
                       return null;
                     },
                   ),
+                  
+                  // Error Message Display
+                  if (_errorMessage.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        _errorMessage,
+                        style: const TextStyle(color: Colors.red, fontSize: 14),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 24),
+                  
+                  // Register Button
                   SizedBox(
                     width: double.infinity,
                     height: 50,
                     child: ElevatedButton(
-                      onPressed: _register,
+                      onPressed: _isLoading ? null : _register,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        backgroundColor: Colors.green,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
-                      child: const Text('Register', style: TextStyle(fontSize: 18, color: Colors.white)),
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text(
+                              'Register',
+                              style: TextStyle(fontSize: 18, color: Colors.white),
+                            ),
                     ),
                   ),
                   const SizedBox(height: 16),
+                  
+                  // Login Link
                   TextButton(
-                    onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginView())),
-                    child: const Text('Already have an account? Login', style: TextStyle(color: Colors.purple)),
+                    onPressed: () => Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const LoginView()),
+                    ),
+                    child: const Text(
+                      'Already have an account? Login',
+                      style: TextStyle(color: Colors.green),
+                    ),
                   ),
                 ],
               ),

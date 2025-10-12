@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(ashaId) {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ashaId == ashaId;
+    }
+    
+    function isAdmin() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+   match /users/{userId} {
+  allow read, write: if request.auth != null && request.auth.uid == userId;
+}
+    
+    match /appointments/{docId} {
+      allow read: if request.auth != null && resource != null && resource.data.ashaId != null && isOwner(resource.data.ashaId);
+      allow create: if request.auth != null && request.resource.data.ashaId != null && request.resource.data.keys().hasAll(['ashaId', 'status']) && isOwner(request.resource.data.ashaId);
+      allow update, delete: if request.auth != null && resource != null && resource.data.ashaId != null && isOwner(resource.data.ashaId);
+    }
+    
+    match /inventory/{ashaId} {
+      allow read, create, update: if request.auth != null && isOwner(ashaId);
+      allow delete: if false;
+    }
+    
+    match /requests/{docId} {
+      allow read, create: if request.auth != null &&
+                           (resource == null || (resource.data.ashaId != null && isOwner(resource.data.ashaId))) &&
+                           (request.resource == null || (request.resource.data.ashaId != null && isOwner(request.resource.data.ashaId)));
+      allow update: if request.auth != null &&
+                     ((resource != null && resource.data.ashaId != null && isOwner(resource.data.ashaId)) || isAdmin());
+      allow delete: if request.auth != null && isAdmin();
+    }
+    
+    match /visits/{docId} {
+      allow read, create: if request.auth != null &&
+                           (resource == null || (resource.data.ashaId != null && isOwner(resource.data.ashaId))) &&
+                           (request.resource == null || (request.resource.data.ashaId != null && isOwner(request.resource.data.ashaId)));
+      allow update, delete: if request.auth != null && resource != null && resource.data.ashaId != null && isOwner(resource.data.ashaId);
+    }
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

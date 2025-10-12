@@ -23,7 +23,7 @@
   "firestore": {
     "database": "users",
     "location": "asia-south2",
-    "rules": "rules_version = '2';",
-    "indexes": "atch /databases/{database}/documents {"
+  "rules": "firestore.rules",
+  "indexes": "firestore.indexes.json"
   }
 }
