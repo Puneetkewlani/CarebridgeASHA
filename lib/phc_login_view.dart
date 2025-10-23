@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-class LoginView extends StatefulWidget {
-  const LoginView({super.key});
+class PHCLoginView extends StatefulWidget {
+  const PHCLoginView({super.key});
 
   @override
-  State<LoginView> createState() => _LoginViewState();
+  State<PHCLoginView> createState() => _PHCLoginViewState();
 }
 
-class _LoginViewState extends State<LoginView> {
+class _PHCLoginViewState extends State<PHCLoginView> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -18,66 +17,84 @@ class _LoginViewState extends State<LoginView> {
   bool _isPasswordVisible = false;
 
   Future<void> _login() async {
-    if (!_formKey.currentState!.validate()) return;
+  if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isLoading = true);
+  setState(() => _isLoading = true);
 
-    try {
-      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+  try {
+    print('🔵 Step 1: Starting Firebase Auth...');
+    
+    final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text,
+    );
 
-      // Get user data from Firestore
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(credential.user!.uid)
-          .get();
+    print('✅ Step 2: Auth successful! UID: ${credential.user!.uid}');
+    print('🔵 Step 3: Navigating to dashboard...');
 
-      if (userDoc.exists) {
-        final data = userDoc.data()!;
-        
-        // Verify user is ASHA worker
-        if (data['role'] != 'ASHA') {
-          await FirebaseAuth.instance.signOut();
-          throw Exception('This account is not registered as an ASHA worker.');
-        }
-
-        // Save user data to SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('userRole', 'ASHA');
-        await prefs.setString('fullName', data['fullName'] ?? '');
-        await prefs.setString('ashaId', data['ashaId'] ?? '');
-        await prefs.setString('location', data['location'] ?? '');
-        await prefs.setString('phcName', data['phcName'] ?? '');
-
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/asha-dashboard');
-        }
-      } else {
-        await FirebaseAuth.instance.signOut();
-        throw Exception('User account not found. Please contact your PHC administrator.');
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Login failed: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/phc-dashboard');
+      print('✅ Step 4: Navigation complete!');
     }
 
-    setState(() => _isLoading = false);
+  } on FirebaseAuthException catch (e) {
+    print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
+    
+    String errorMessage = 'Login failed';
+    switch (e.code) {
+      case 'user-not-found':
+        errorMessage = 'No account found with this email';
+        break;
+      case 'wrong-password':
+        errorMessage = 'Incorrect password';
+        break;
+      case 'invalid-email':
+        errorMessage = 'Invalid email address';
+        break;
+      case 'user-disabled':
+        errorMessage = 'This account has been disabled';
+        break;
+      case 'too-many-requests':
+        errorMessage = 'Too many attempts. Try again later';
+        break;
+      default:
+        errorMessage = e.message ?? 'Login failed';
+    }
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  } catch (e) {
+    print('❌ Unknown Error: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  } finally {
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
   }
+}
+
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFA8FBD3),
       appBar: AppBar(
-        title: const Text('ASHA Worker Login'),
+        title: const Text('PHC Staff Login'),
         backgroundColor: const Color(0xFF31326F),
         foregroundColor: Colors.white,
       ),
@@ -109,13 +126,13 @@ class _LoginViewState extends State<LoginView> {
                   child: Column(
                     children: [
                       Icon(
-                        Icons.people,
+                        Icons.admin_panel_settings,
                         size: 60,
-                        color: Colors.green,
+                        color: const Color(0xFF31326F),
                       ),
                       const SizedBox(height: 16),
                       const Text(
-                        'ASHA Worker Portal',
+                        'PHC Staff Portal',
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -123,7 +140,7 @@ class _LoginViewState extends State<LoginView> {
                         ),
                       ),
                       const Text(
-                        'Community Health Services',
+                        'Primary Health Centre Management',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.grey,
@@ -195,7 +212,7 @@ class _LoginViewState extends State<LoginView> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _login,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
+                      backgroundColor: const Color(0xFF31326F),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -247,7 +264,7 @@ class _LoginViewState extends State<LoginView> {
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
-                          'Your account must be registered by your PHC staff to login.',
+                          'PHC staff accounts are created by system administrators.',
                           style: TextStyle(fontSize: 13),
                         ),
                       ),
